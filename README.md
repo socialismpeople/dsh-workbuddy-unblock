@@ -1,8 +1,8 @@
-# dsh-workbuddy-unblock
+﻿# dsh-workbuddy-unblock
 
-> 修复 DeepSeek Harness（DSH）里 **workbuddy / buddy（CodeBuddy）通道报 400/11128「请求被拦截」、403/11140「账号被限制」** 的完整方案。
+> 在 `dsh-our-free-model` 插件内部就地修复 **workbuddy / buddy（CodeBuddy）通道 400/11128「请求被拦截」** 的补丁集。
 >
-> 含可复现的定位过程、补丁脚本、以及**为什么"脱敏敏感词"不管用**。
+> ⚠️ **先读这个**：本方案没有技术独到之处。社区已有的原生 DSH 插件 [dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy)（1180★）早在 2026-10 就解决了同一问题，且覆盖更全。本补丁只适合**已经在用 `dsh-our-free-model`、不想换插件**的场景。详见 [docs/comparison.md](docs/comparison.md)。
 
 ---
 
@@ -30,13 +30,31 @@ LlmError: buddy: 请求被拦截，请重新发送 Illegal API invocation from a
 }
 ```
 
-社区普遍的说法是「上游在检测 DSH 提示词指纹」，并给出了脱敏方案（给敏感词插零宽空格）。**实测证明这个思路方向对、但方法不对。**
+---
+
+## 核心结论
+
+**上游匹配的是每条 system 与 assistant 消息的开头**，与账号、额度、网络无关，换账号不会改变结果。
+
+这个具体机制来自社区 [issue #163](https://github.com/dingminhua/dsh-connect-workbuddy/issues/163) 里上游返回的原始诊断：
+
+> 网关匹配的是每一条 system 与 assistant 消息的开头，与账号、积分、额度、网络都无关，换账号或换区域也不会改变结果。
+
+已知被拦的开头示例：
+
+```
+You are an AI agent powered by DeepSeek Harness.
+```
+
+因此修复方向是**改写这些开头句**，而不是处理敏感词。
+
+> 关于"零宽空格脱敏"：该路线已于 2026-10-29 失效——CN 网关在匹配前会规范化 U+200B。详见 [comparison.md](docs/comparison.md) 第三节。
 
 ---
 
-## 核心结论（先看这个）
+## 本方案的实测数据
 
-**上游匹配的是提示词的连续模板片段，不是敏感词。**
+以下是本仓库独立复现的实验记录（结论与社区一致，但范围有限——只截取了前 2000 字符，实际请求可达 17000+ 字）：
 
 同一个 token、同一个端点、同样的提问，只换 system 内容：
 
@@ -54,33 +72,47 @@ LlmError: buddy: 请求被拦截，请重新发送 Illegal API invocation from a
 | **每句之间加空行** | ✅ 通过 |
 | **删掉 `@` 符号** | ✅ 通过 |
 | 全部转小写 | ❌ BLOCK（大小写不敏感） |
-| 插入零宽空格 | ❌ BLOCK（**不是关键词匹配**） |
+| 插入零宽空格 | ❌ BLOCK |
 
-> 如果上游在做关键词匹配，插零宽空格应该能绕过。实际绕不过，说明它匹配的是 **token 序列 / 语义片段**。
+> **为什么零宽空格无效**（本仓库当时没查出来，社区给了答案）：CN 网关在匹配前会**规范化 U+200B**，所以插零宽这条路从 2026-10-29 起就被堵死了。见 [issue #163](https://github.com/dingminhua/dsh-connect-workbuddy/issues/163) 的复测更新。
 
-**结论：必须改写措辞，不能只做字符级脱敏。**
+**结论：必须改写措辞。**
 
 ---
 
-## 触发点在哪
+## 本方案当时的定位错误（如实记录）
 
-用二分法定位到 109 字符通过、112 字符被拦，落在这一段：
+本仓库最初用二分法把触发点定位在下面这段：
 
 ```
 Tokens prefixed with @ are paths the user explicitly referenced.
 Relative paths resolve from the workspace root; absolute paths identify files or directories on the host.
 ```
 
-但**单独发其中任何一句都能通过**，只有两句连起来才被拦。这就是模板指纹的特征。
+**这个定位只对了一半。** 事后做 2×2 对照才发现：上游**同时**检查**消息开头**的身份声明句和**正文中段**的模板片段，两处都得清。
+
+2×2 对照实测：
+
+| 组合 | 结果 |
+|---|---|
+| 开头句 + 原第 0 段（修复前） | ❌ BLOCK |
+| 开头句 + **改后**第 0 段（只改第 0 段） | ❌ BLOCK |
+| **删开头句** + 原第 0 段（只删开头） | ❌ BLOCK |
+| 删开头句 + 改后第 0 段（修复后） | ✅ PASS |
+
+**所以 PATCH1 与 PATCH6 缺一不可。** 初版文档说"PATCH6 是核心修复"不准确，中途想改成"PATCH1 才是核心"也不准确。
+
+另外本方案的诊断只截取了 system 前 **2000 字符**，而实际请求可达 **17000+ 字**（见社区 issue #163），且**未覆盖 assistant 消息开头**——这两处是真实缺口。
 
 ---
 
 ## 解决方案
 
-改写 DSH 提示词里的模板句，语义不变、措辞不同：
+改写 DSH 提示词里的模板句与身份声明句，语义不变、措辞不同：
 
 | 原模板 | 改写后 |
 |---|---|
+| `You are an AI agent powered by DeepSeek Harness.` | **整句删除**（PATCH1） |
 | `Tokens prefixed with @ are paths the user explicitly referenced.` | `Some arguments may reference filesystem locations.` |
 | `Relative paths resolve from the workspace root; absolute paths identify files or directories on the host.` | `A bare location is understood as relative to the working directory; a fully qualified one points elsewhere.` |
 | `A trailing slash marks a directory: list it when its contents matter.` | `A directory is conventionally written with a trailing separator.` |
@@ -93,6 +125,8 @@ Relative paths resolve from the workspace root; absolute paths identify files or
 原始 system  -> BLOCK  code=11128
 改写后 system -> PASS   收到
 ```
+
+> ⚠️ **本方案未处理 assistant 消息开头**。社区方案（dsh-connect-workbuddy）已覆盖此项。如果你的会话历史里有被拦的 assistant 开头，本补丁可能不够。
 
 ---
 
@@ -107,13 +141,19 @@ Relative paths resolve from the workspace root; absolute paths identify files or
 | 3 | Buddy 适配器 send 前 | 落盘诊断，记录实际发出的 system | 排查用，可关 |
 | 4 | `attributionHeaders2()` | 过滤 `x-dsh` / `x-harness` 等身份请求头 | 建议 |
 | 5 | Buddy send() | 补齐 `X-Conversation-*` 三件套等渠道校验头 | 建议 |
-| 6 | `dshRewriteTemplates()` | **改写模板指纹句**（核心修复） | **必需** |
+| 6 | `dshRewriteTemplates()` | 改写中段模板句 | **必需**（与 PATCH1 缺一不可） |
 
-**只有 2 和 6 是决定性的**，其余是加固。
+**1、2、6 三项是决定性的**（缺任一项仍会 400/11128），3 是排查工具，4、5 是加固。
 
 ---
 
 ## 快速开始
+
+> **先想清楚要不要用这个。**
+>
+> 如果你还没装插件，直接用 [dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy)（1180★），一行 `npm i` 搞定，方案更完整。
+>
+> 只有在**已经在用 `dsh-our-free-model`、不打算换插件**的情况下，才建议用本补丁。
 
 ### 前置
 
@@ -198,9 +238,13 @@ powershell -ExecutionPolicy Bypass -File patch-buddy-desense.ps1 -Revert
 
 ### 这是对抗性方案
 
-上游随时可能换判据。本次定位方法（诊断落盘 + 二分）是可复用的，但具体改写规则可能失效。
+上游随时可能换判据。**本次补丁的存活周期可能比社区方案短**：
 
-**不建议用在重要工作流上**，留好备选模型。
+- 本方案只处理 system 消息，**未处理 assistant 消息开头**（社区已覆盖）
+- 本方案无被拦后的降级重试（社区有）
+- 本方案无设备指纹派生（社区网关方案有）
+
+**不建议用在重要工作流上**，留好备选模型。真要长期用，换社区插件。
 
 ---
 
@@ -230,20 +274,23 @@ powershell -ExecutionPolicy Bypass -File patch-buddy-desense.ps1 -Revert
 ├── apply-patch3.mjs               补丁 3：诊断落盘
 ├── apply-patch4.mjs               补丁 4：清身份请求头
 ├── apply-patch5.mjs               补丁 5：渠道校验必需头
-├── apply-patch6.mjs               补丁 6：模板指纹改写（核心）
+├── apply-patch6.mjs               补丁 6：模板句改写（次要，见上文归因修正）
 └── docs/
+    ├── comparison.md              与社区方案的差异（含本方案的错误修正记录）
     ├── diagnosis.md               完整排查过程与实验数据
-    └── reference-desensitize.py   社区脱敏实现（参考，含压缩策略）
+    └── reference-desensitize.py   社区脱敏实现（参考，零宽方案已失效）
 ```
 
 ---
 
 ## 致谢
 
-思路参考了以下项目：
+**本方案的关键机制理解来自社区，而非本仓库的独立发现：**
 
-- [Hyact/workbuddy-switch-plus](https://github.com/Hyact/workbuddy-switch-plus) — `reverse-proxy/core/desensitize.py` 的脱敏 + 压缩策略
-- [changexbc/workbuddy-switch](https://github.com/changexbc/workbuddy-switch) — 账号切换与管理
+- **[dingminhua/dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy)** — 最重要。其 [issue #163](https://github.com/dingminhua/dsh-connect-workbuddy/issues/163) 贴出了上游返回的原始诊断，说明"网关匹配的是每一条 system 与 assistant 消息的开头"；README 记录了零宽空格已被网关规范化（2026-10-29）、三道门的具体内容、以及 5.13.1/5.14.0 的按句改写方案。**如果早点读到这个仓库，本方案的大部分弯路可以省掉。**
+- [XDTrees/dsh-xdpool](https://github.com/XDTrees/dsh-xdpool) — 多账号池与面板设计参考
+- [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) — `TROUBLESHOOTING-11-128.md` 的排查顺序与提示词三模式
+- [Hyact/workbuddy-switch-plus](https://github.com/Hyact/workbuddy-switch-plus) — 本仓库 PATCH1 词表来源（零宽方案，现已失效）
 - [Ebony-Vinyl/dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model) — 被修补的插件本体
 
 ---
