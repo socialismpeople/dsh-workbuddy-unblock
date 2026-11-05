@@ -1,0 +1,30 @@
+# 备份文件
+*.bak
+*.bak-*
+pack.js.bak-*
+
+# 诊断输出（可能含提示词内容）
+buddy-payload-diag.jsonl
+*.log
+
+# 凭据 / 密钥 —— 绝对不要提交
+.credentials.yaml
+*credentials*
+*token*
+*.info
+creds.json
+_creds*.json
+
+# 临时实验脚本
+_*.py
+_*.cjs
+_probe*.py
+_bisect*.py
+_experiment*.py
+_test_*.py
+_test_*.cjs
+
+# 系统
+.DS_Store
+Thumbs.db
+node_modules/
