@@ -85,6 +85,8 @@ if ($Status) {
         @{ Name = 'PATCH4 (清身份请求头)       '; Key = 'DSH PATCH 4' },
         @{ Name = 'PATCH5 (渠道校验必需头)     '; Key = 'DSH PATCH 5' },
         @{ Name = 'PATCH6 (模板指纹改写)       '; Key = 'DSH PATCH 6' }
+        @{ Name = 'PATCH7 (assistant 开头清理)  '; Key = 'DSH PATCH 7' }
+        @{ Name = 'PATCH8 (诊断增强)            '; Key = 'DSH PATCH 8' }
     )
     foreach ($p in $patches) {
         $state = if ($t.Contains($p.Key)) { '已打' } else { '未打' }
@@ -119,7 +121,9 @@ $appliers = @(
     'apply-patch3.mjs',
     'apply-patch4.mjs',
     'apply-patch5.mjs',
-    'apply-patch6.mjs'
+    'apply-patch6.mjs',
+    'apply-patch7.mjs',
+    'apply-patch8.mjs'
 )
 
 foreach ($a in $appliers) {
