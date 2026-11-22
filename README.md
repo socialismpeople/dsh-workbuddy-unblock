@@ -1,4 +1,4 @@
-﻿# dsh-workbuddy-unblock
+# dsh-workbuddy-unblock
 
 > 在 `dsh-our-free-model` 插件内部就地修复 **workbuddy / buddy（CodeBuddy）通道 400/11128「请求被拦截」** 的补丁集。
 >
@@ -147,6 +147,22 @@ Relative paths resolve from the workspace root; absolute paths identify files or
 
 ---
 
+## 2026-11-22 更新：官方版 DSH 的补充修复（PATCH7/8）
+
+官方版 DSH（0.2.2-rc.5，`D:\dsh`）即使打了 PATCH1-6 仍报 11128。排查发现：
+
+- 用官方版凭据 + 官方版实际发出的 system **直连后端返回 200 OK** → 账号、system 都没问题
+- 构造测试确认：**历史 assistant 消息若以 `You are an AI agent powered by DeepSeek Harness.` 开头，会触发 400/11128**
+- 这正是社区 [issue #163](https://github.com/dingminhua/dsh-connect-workbuddy/issues/163) 说的"assistant 消息的开头也被检查"
+
+PATCH1-6 只处理 system，漏了 assistant 历史消息：
+
+- **PATCH7**：在 `serializeMessages2` 序列化 assistant 消息时，清掉开头的身份声明句，正文原样保留。实测：未修复 400/11128 → 修复后 200 OK；官方版重启后发消息已正常回复。
+- **PATCH8**：诊断增强，记录每条消息的角色与开头 200 字符摘要，便于定位下一个触发点（只写摘要，不写对话全文）。
+
+> 修正记录：PATCH7 初版把整行替换成 `[assistant reply]`，会丢失正文；`fix-patch7.mjs` 改为只替换开头那一句。当前仓库里的 `apply-patch7.mjs` 已是修正后的逻辑。
+
+---
 ## 快速开始
 
 > **先想清楚要不要用这个。**
@@ -275,6 +291,9 @@ powershell -ExecutionPolicy Bypass -File patch-buddy-desense.ps1 -Revert
 ├── apply-patch4.mjs               补丁 4：清身份请求头
 ├── apply-patch5.mjs               补丁 5：渠道校验必需头
 ├── apply-patch6.mjs               补丁 6：模板句改写（次要，见上文归因修正）
+├── apply-patch7.mjs               补丁 7：assistant 历史消息开头清理（官方版必需）
+├── apply-patch8.mjs               补丁 8：诊断增强（消息开头摘要）
+├── fix-patch7.mjs                 补丁 7 初版的修正脚本（仅存档）
 └── docs/
     ├── comparison.md              与社区方案的差异（含本方案的错误修正记录）
     ├── diagnosis.md               完整排查过程与实验数据
