@@ -130,7 +130,12 @@ foreach ($a in $appliers) {
     $f = Join-Path $here $a
     if (-not (Test-Path $f)) { Write-Host "跳过缺失的 $a" -ForegroundColor Yellow; continue }
     Write-Host "应用 $a ..." -NoNewline
-    $out = & node $f $pack 2>&1
+    if ($a -eq 'apply-patch.mjs') {
+        # 只有第一个补丁需要额外的函数体文件参数
+        $out = & node $f $pack (Join-Path $here 'dsh-buddy-desense.patch.js') 2>&1
+    } else {
+        $out = & node $f $pack 2>&1
+    }
     if ($LASTEXITCODE -eq 2) {
         Write-Host " 已打过，跳过" -ForegroundColor DarkGray
     } elseif ($LASTEXITCODE -ne 0) {
